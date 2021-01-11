@@ -1,0 +1,4 @@
+ext {
+    // Koin
+    koin_version = '2.1.0'
+}
