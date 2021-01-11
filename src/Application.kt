@@ -1,37 +1,26 @@
 package com.psachdev
 
+import com.google.gson.Gson
 import com.psachdev.JwtManager.Companion.tokenClaimId
-import io.ktor.application.Application
-import io.ktor.application.ApplicationCallPipeline
-import io.ktor.application.call
-import io.ktor.application.install
-import io.ktor.auth.Authentication
-import io.ktor.auth.authenticate
-import io.ktor.auth.jwt.jwt
-import io.ktor.features.CallLogging
-import io.ktor.features.ContentNegotiation
-import io.ktor.gson.gson
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.cio.websocket.Frame
-import io.ktor.http.cio.websocket.pingPeriod
-import io.ktor.http.cio.websocket.readText
-import io.ktor.http.cio.websocket.timeout
-import io.ktor.request.receive
-import io.ktor.request.uri
-import io.ktor.response.respond
-import io.ktor.response.respondText
-import io.ktor.routing.post
-import io.ktor.routing.routing
-import io.ktor.util.KtorExperimentalAPI
-import io.ktor.websocket.WebSocketServerSession
-import io.ktor.websocket.WebSockets
-import io.ktor.websocket.webSocket
+import io.ktor.application.*
+import io.ktor.auth.*
+import io.ktor.auth.jwt.*
+import io.ktor.features.*
+import io.ktor.gson.*
+import io.ktor.http.*
+import io.ktor.http.cio.websocket.*
+import io.ktor.request.*
+import io.ktor.response.*
+import io.ktor.routing.*
+import io.ktor.util.*
+import io.ktor.websocket.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import org.koin.ktor.ext.Koin
 import org.koin.ktor.ext.inject
 import java.time.Duration
+import java.util.*
 
 fun main(args: Array<String>): Unit = io.ktor.server.cio.EngineMain.main(args)
 
@@ -78,12 +67,14 @@ fun Application.module() {
     }
 
     routing {
-        val websocketConnections = mutableListOf<WebSocketServerSession>()
+        val websocketConnections = Collections.synchronizedList(mutableListOf<WebSocketServerSession>())
         authenticate("jwt_authentication") {
             webSocket("/signal_server") {
                 websocketConnections.add(this)
+                val gson = Gson()
                 print("\n $call.request.origin.host")
-                send(Frame.Text("Hi from server"))
+                send(Frame.Text("Hi from server.\n " +
+                        "There are ${websocketConnections.size} connected users"))
                 while (true) {
                     if(incoming.isClosedForReceive){
                         websocketConnections.remove(this)
@@ -94,7 +85,14 @@ fun Application.module() {
                             for(websocketServerConnection in websocketConnections) {
                                 if (!websocketServerConnection.outgoing.isClosedForSend) {
                                     try {
-                                        websocketServerConnection.outgoing.send(Frame.Text("Client said: " + frame.readText()))
+                                        val incomingStr = frame.readText()
+                                        val incomingText = try{
+                                            gson.fromJson(incomingStr, IncomingData::class.java)
+                                        }catch (e: Exception){
+                                            ""
+                                        }
+                                        println("Gson " + incomingText)
+                                        websocketServerConnection.outgoing.send(Frame.Text("Client said: " + incomingStr))
                                     }catch (e: ClosedReceiveChannelException){
                                         websocketConnections.remove(this)
                                         cancel()
@@ -113,6 +111,7 @@ fun Application.module() {
         val serverError = "Server Error"
         post("/login") {
             val incomingUser = call.receive<User>()
+
             val chatUser = if(service.isUserPresent(incomingUser.id)){
                 service.getUser(incomingUser.id)
             }else{
@@ -127,12 +126,13 @@ fun Application.module() {
             }
 
             if(token == null){
+                print("HERE 4")
                 call.respond(HttpStatusCode.InternalServerError, serverError)
             }else{
                 call.respondText(token)
             }
-        }
 
+        }
     }
 }
 
