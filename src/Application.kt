@@ -4,12 +4,15 @@ import io.ktor.application.*
 import io.ktor.auth.Authentication
 import io.ktor.auth.authenticate
 import io.ktor.auth.jwt.jwt
+import io.ktor.features.CallLogging
+import io.ktor.features.ContentNegotiation
+import io.ktor.gson.gson
 import io.ktor.response.*
 import io.ktor.routing.*
-import io.ktor.http.*
 import io.ktor.websocket.*
 import io.ktor.http.cio.websocket.*
 import io.ktor.request.receive
+import io.ktor.request.uri
 import io.ktor.util.KtorExperimentalAPI
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -22,8 +25,16 @@ fun main(args: Array<String>): Unit = io.ktor.server.cio.EngineMain.main(args)
 @ExperimentalCoroutinesApi
 @Suppress("unused") // Referenced in application.conf
 fun Application.module() {
-    val jwtManager = JwtManager().also { it.init(environment) }
+    val jwtManager = JwtManager().also {
+        it.init(environment)
+    }
     val preAuthorizedUsers = PreAuthorizedUsers()
+
+    install(ContentNegotiation) {
+        gson {
+            setPrettyPrinting()
+        }
+    }
 
     install(WebSockets) {
         pingPeriod = Duration.ofSeconds(15)
@@ -31,8 +42,11 @@ fun Application.module() {
         maxFrameSize = Long.MAX_VALUE
         masking = false
     }
+    install(CallLogging)
+
     install(Authentication){
         jwt(name = "jwt_authentication") {
+            println("HERE 3")
             verifier(jwtManager.verifier)
             validate { credential ->
                 credential.payload.getClaim("id").asString()?.let(preAuthorizedUsers::findUserById)
@@ -40,6 +54,11 @@ fun Application.module() {
         }
     }
 
+    intercept(ApplicationCallPipeline.Call) {
+        if (call.request.uri == "/signal_server") {
+            println("Token " + call.request.headers["Authorization"])
+        }
+    }
     routing {
         val websocketConnections = mutableListOf<WebSocketServerSession>()
         authenticate("jwt_authentication") {
@@ -77,7 +96,7 @@ fun Application.module() {
             send(Frame.Text("Hi from dummy"))
         }
 
-        post("login") {
+        post("/login") {
             val signalUser = call.receive<SignalUser>()
             val user = preAuthorizedUsers.findUserById(signalUser.id)
             val token = jwtManager.makeToken(user)

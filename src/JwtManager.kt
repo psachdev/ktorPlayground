@@ -12,18 +12,21 @@ class JwtManager {
     private lateinit var issuer: String
     private lateinit var secret: String
     private lateinit var validityInMs: String
-    private val algorithm = Algorithm.HMAC512(secret)
+    private lateinit var algorithm: Algorithm
 
-    val verifier: JWTVerifier = JWT
-        .require(algorithm)
-        .withIssuer(issuer)
-        .build()
+    lateinit var verifier: JWTVerifier
 
     @KtorExperimentalAPI
     fun init(environment: ApplicationEnvironment){
-        issuer = environment.config.property("jwt.domain").getString()
+        issuer = environment.config.property("jwt.issuer").getString()
         secret = environment.config.property("jwt.secret").getString()
+        algorithm = Algorithm.HMAC512(secret)
         validityInMs = environment.config.property("jwt.validity_ms").getString()
+
+        verifier = JWT
+        .require(algorithm)
+            .withIssuer(issuer)
+            .build()
     }
 
 
