@@ -24,19 +24,26 @@ class JwtManager {
         validityInMs = environment.config.property("jwt.validity_ms").getString()
 
         verifier = JWT
-        .require(algorithm)
+            .require(algorithm)
             .withIssuer(issuer)
             .build()
     }
 
 
-    fun makeToken(user: SignalUser): String = JWT.create()
-        .withSubject("Authentication")
+    fun makeToken(user: User): String = JWT.create()
+        .withSubject(tokenSubject)
         .withIssuer(issuer)
-        .withClaim("id", user.id)
-        .withClaim("name", user.username)
+        .withClaim(tokenClaimId, user.id)
+        .withClaim(tokenClaimName, user.username)
         .withExpiresAt(getExpiration())
         .sign(algorithm)
 
+
     private fun getExpiration() = Date(System.currentTimeMillis() + validityInMs.toLong())
+
+    companion object {
+        private const val tokenSubject = "Authentication"
+        internal const val tokenClaimId = "id"
+        private const val tokenClaimName = "name"
+    }
 }

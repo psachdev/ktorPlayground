@@ -1,23 +1,37 @@
 package com.psachdev
 
-import io.ktor.application.*
+import com.psachdev.JwtManager.Companion.tokenClaimId
+import io.ktor.application.Application
+import io.ktor.application.ApplicationCallPipeline
+import io.ktor.application.call
+import io.ktor.application.install
 import io.ktor.auth.Authentication
 import io.ktor.auth.authenticate
 import io.ktor.auth.jwt.jwt
 import io.ktor.features.CallLogging
 import io.ktor.features.ContentNegotiation
 import io.ktor.gson.gson
-import io.ktor.response.*
-import io.ktor.routing.*
-import io.ktor.websocket.*
-import io.ktor.http.cio.websocket.*
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.cio.websocket.Frame
+import io.ktor.http.cio.websocket.pingPeriod
+import io.ktor.http.cio.websocket.readText
+import io.ktor.http.cio.websocket.timeout
 import io.ktor.request.receive
 import io.ktor.request.uri
+import io.ktor.response.respond
+import io.ktor.response.respondText
+import io.ktor.routing.post
+import io.ktor.routing.routing
 import io.ktor.util.KtorExperimentalAPI
+import io.ktor.websocket.WebSocketServerSession
+import io.ktor.websocket.WebSockets
+import io.ktor.websocket.webSocket
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
-import java.time.*
+import org.koin.ktor.ext.Koin
+import org.koin.ktor.ext.inject
+import java.time.Duration
 
 fun main(args: Array<String>): Unit = io.ktor.server.cio.EngineMain.main(args)
 
@@ -28,7 +42,11 @@ fun Application.module() {
     val jwtManager = JwtManager().also {
         it.init(environment)
     }
-    val preAuthorizedUsers = PreAuthorizedUsers()
+
+    install(Koin) {
+        modules(userAppModule)
+    }
+    val service by inject<UserService>()
 
     install(ContentNegotiation) {
         gson {
@@ -46,10 +64,9 @@ fun Application.module() {
 
     install(Authentication){
         jwt(name = "jwt_authentication") {
-            println("HERE 3")
             verifier(jwtManager.verifier)
             validate { credential ->
-                credential.payload.getClaim("id").asString()?.let(preAuthorizedUsers::findUserById)
+                credential.payload.getClaim(tokenClaimId).asString()?.let(service::getUser)
             }
         }
     }
@@ -59,6 +76,7 @@ fun Application.module() {
             println("Token " + call.request.headers["Authorization"])
         }
     }
+
     routing {
         val websocketConnections = mutableListOf<WebSocketServerSession>()
         authenticate("jwt_authentication") {
@@ -92,15 +110,27 @@ fun Application.module() {
             }//end websocket
         }
 
-        webSocket("/dummy"){
-            send(Frame.Text("Hi from dummy"))
-        }
-
+        val serverError = "Server Error"
         post("/login") {
-            val signalUser = call.receive<SignalUser>()
-            val user = preAuthorizedUsers.findUserById(signalUser.id)
-            val token = jwtManager.makeToken(user)
-            call.respondText(token)
+            val incomingUser = call.receive<User>()
+            val chatUser = if(service.isUserPresent(incomingUser.id)){
+                service.getUser(incomingUser.id)
+            }else{
+                service.saveUser(incomingUser)
+                incomingUser
+            }
+
+            val token = if(chatUser != null){
+                jwtManager.makeToken(chatUser)
+            }else{
+                null
+            }
+
+            if(token == null){
+                call.respond(HttpStatusCode.InternalServerError, serverError)
+            }else{
+                call.respondText(token)
+            }
         }
 
     }
